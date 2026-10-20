@@ -53,7 +53,13 @@ public static partial class RenderUtil
         if (!TryLoadKhanPaletteLookup(archiveRoot, letter, out var lookup))
             return null;
 
-        if (!entry.TryGetNumericIdentifier(out var identifier, 3))
+        //lod armor sheets use 7 digit ids (mu0000389.epf, mu000038901.epf)
+        var numDigits = Path.GetFileNameWithoutExtension(entry.EntryName)
+                            .Count(char.IsDigit) >= 7
+            ? 7
+            : 3;
+
+        if (!entry.TryGetNumericIdentifier(out var identifier, numDigits))
             return null;
 
         var overrideType = male ? KhanPalOverrideType.Male : KhanPalOverrideType.Female;
@@ -140,16 +146,10 @@ public static partial class RenderUtil
         if (lookup is not null)
             return true;
 
-        var khanPalPath = Path.Combine(archiveRoot, "khanpal.dat");
-
-        if (!File.Exists(khanPalPath))
-        {
-            lookup = null;
-
+        if (!TryOpenKhanPalArchive(archiveRoot, out var kahnPal))
             return false;
-        }
 
-        using var kahnPal = DataArchive.FromFile(khanPalPath);
+        using var _ = kahnPal;
         lookup = KhanMPaletteLookup = Palette.FromArchive("palm", kahnPal);
 
         return true;
@@ -158,51 +158,67 @@ public static partial class RenderUtil
     private static bool TryLoadKhanPaletteLookup(string archiveRoot, string letter, [NotNullWhen(true)] out PaletteLookup? lookup)
     {
         letter = letter.ToLower();
-        var khanPalPath = Path.Combine(archiveRoot, "khanpal.dat");
+        var khanPal = new Lazy<DataArchive?>(() => TryOpenKhanPalArchive(archiveRoot, out var archive) ? archive : null);
 
-        if (!File.Exists(khanPalPath))
-        {
-            lookup = null;
-
-            return false;
-        }
-
-        var khanPal = new Lazy<DataArchive>(() => DataArchive.FromFile(khanPalPath));
+        PaletteLookup? Load()
+            => khanPal.Value is { } archive
+                ? PaletteLookup.FromArchive($"pal{letter}", archive)
+                               .Freeze()
+                : null;
 
         try
         {
-            var pattern = $"pal{letter}";
-
             lookup = letter switch
             {
-                "b" => KhanBPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                "c" => KhanCPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                "e" => KhanEPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                "f" => KhanFPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                "h" => KhanHPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                "i" => KhanIPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                "l" => KhanLPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                "p" => KhanPPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                "u" => KhanUPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                "w" => KhanWPaletteLookup ??= PaletteLookup.FromArchive(pattern, khanPal.Value)
-                                                           .Freeze(),
-                _ => null
+                "b" => KhanBPaletteLookup ??= Load(),
+                "c" => KhanCPaletteLookup ??= Load(),
+                "e" => KhanEPaletteLookup ??= Load(),
+                "f" => KhanFPaletteLookup ??= Load(),
+                "h" => KhanHPaletteLookup ??= Load(),
+                "i" => KhanIPaletteLookup ??= Load(),
+                "l" => KhanLPaletteLookup ??= Load(),
+                "p" => KhanPPaletteLookup ??= Load(),
+                "u" => KhanUPaletteLookup ??= Load(),
+                "w" => KhanWPaletteLookup ??= Load(),
+                _   => null
             };
 
             return lookup != null;
         } finally
         {
             if (khanPal.IsValueCreated)
-                khanPal.Value.Dispose();
+                khanPal.Value?.Dispose();
         }
+    }
+
+    /// <summary>
+    ///     Opens the archive that holds the khan palettes. Unora keeps them in khanpal.dat, Lod keeps them inside khan.dat
+    /// </summary>
+    private static bool TryOpenKhanPalArchive(string archiveRoot, [NotNullWhen(true)] out DataArchive? archive)
+    {
+        var khanPalPath = Path.Combine(archiveRoot, "khanpal.dat");
+
+        if (File.Exists(khanPalPath))
+        {
+            archive = DataArchive.FromFile(khanPalPath);
+
+            return true;
+        }
+
+        var khanPath = Path.Combine(archiveRoot, "khan.dat");
+
+        if (File.Exists(khanPath))
+        {
+            archive = DataArchive.FromFile(khanPath);
+
+            if (archive.Contains("palm001.pal"))
+                return true;
+
+            archive.Dispose();
+        }
+
+        archive = null;
+
+        return false;
     }
 }
